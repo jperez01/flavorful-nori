@@ -9,6 +9,17 @@
 #include <nori/mesh.h>
 
 NORI_NAMESPACE_BEGIN
+struct Node {
+    BoundingBox3f box;
+    std::vector<Node*> children;
+    std::vector<uint32_t> triangle_indices;
+    std::vector<uint32_t> mesh_indices;
+
+    Node() = default;
+};
+
+static constexpr int MAX_RECURSIVE_DEPTH = 12;
+static constexpr int MAX_TRIANGLES_PER_NODE = 10;
 
 /**
  * \brief Acceleration data structure for ray intersection queries
@@ -54,8 +65,15 @@ public:
     bool rayIntersect(const Ray3f &ray, Intersection &its, bool shadowRay) const;
 
 private:
+    std::vector<Mesh *> m_meshes;
     Mesh         *m_mesh = nullptr; ///< Mesh (only a single one for now)
     BoundingBox3f m_bbox;           ///< Bounding box of the entire scene
+    const Node *root;
+
+    bool intersectRecursive(const Node &node, Ray3f &ray, Intersection &its, bool shadowRay, uint32_t &hit_idx) const;
+    Node* build(BoundingBox3f &box, std::vector<uint32_t> &triangle_indices, std::vector<uint32_t> &mesh_indices, int recursive_depth = 0);
 };
+
+    std::vector<BoundingBox3f> subdivideBBox(BoundingBox3f &parent);
 
 NORI_NAMESPACE_END

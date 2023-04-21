@@ -20,6 +20,10 @@ public:
     /// Probability density of \ref squareToUniformSquare()
     static float squareToUniformSquarePdf(const Point2f &p);
 
+    static Point2f squareToUniformTriangle(const Point2f &sample);
+    static float squareToUniformTrianglePdf(const Point2f &p);
+
+    static float tentPdfInverse(float value);
     /// Sample a 2D tent distribution
     static Point2f squareToTent(const Point2f &sample);
 

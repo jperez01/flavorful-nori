@@ -16,6 +16,7 @@ NORI_NAMESPACE_BEGIN
 Mesh::Mesh() { }
 
 Mesh::~Mesh() {
+    m_pdf.clear();
     delete m_bsdf;
     delete m_emitter;
 }
@@ -26,6 +27,12 @@ void Mesh::activate() {
         m_bsdf = static_cast<BSDF *>(
             NoriObjectFactory::createInstance("diffuse", PropertyList()));
     }
+
+    m_pdf.reserve(m_F.cols());
+    for (uint32_t i = 0; i < m_F.cols(); i++) {
+        m_pdf.append(surfaceArea(i));
+    }
+    m_pdf.normalize();
 }
 
 float Mesh::surfaceArea(uint32_t index) const {
@@ -130,7 +137,41 @@ std::string Mesh::toString() const {
     );
 }
 
-std::string Intersection::toString() const {
+    float Mesh::pdf(const Point3f &p) const {
+        if (m_pdf.isNormalized())
+            return m_pdf.getNormalization();
+        else
+            return 0.0f;
+    }
+
+    void Mesh::samplePosition(const Point2f &sample, Point3f &p, Normal3f &n, Point2f &uv) const {
+        Point2f sampledUV = Warp::squareToUniformTriangle(sample);
+        Vector3f baryCoords(sampledUV.x(), sampledUV.y(), 1 - sampledUV.x() - sampledUV.y());
+
+        float third_sample = sample[0];
+        size_t index = m_pdf.sampleReuse(third_sample);
+        uint32_t index0 = m_F(0, index), index1 = m_F(1, index), index2 = m_F(2, index);
+        Point3f p0 = m_V.col(index0), p1 = m_V.col(index1), p2 = m_V.col(index2);
+
+        p = baryCoords.x() * p0 + baryCoords.y() * p1 + baryCoords.z() * p2;
+        if (m_N.size() > 0) {
+            n = (baryCoords.x() * m_N.col(index0)
+                    + baryCoords.y() * m_N.col(index1)
+                    + baryCoords.z() * m_N.col(index2)).normalized();
+        } else {
+            Vector3f someValue = p1 - p0, otherValue = p2 - p0;
+            n = someValue.cross(otherValue).normalized();
+        }
+
+        if (m_UV.size() > 0) {
+            uv = baryCoords.x() * m_UV.col(index0)
+                    + baryCoords.y() * m_UV.col(index1)
+                    + baryCoords.z() * m_UV.col(index2);
+        }
+    }
+
+
+    std::string Intersection::toString() const {
     if (!mesh)
         return "Intersection[invalid]";
 

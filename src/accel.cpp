@@ -5,19 +5,40 @@
 */
 
 #include <nori/accel.h>
+#include <nori/timer.h>
 #include <Eigen/Geometry>
+
+#include <tbb/parallel_for.h>
+#include <tbb/blocked_range.h>
+#include <tbb/task_scheduler_init.h>
 
 NORI_NAMESPACE_BEGIN
 
 void Accel::addMesh(Mesh *mesh) {
-    if (m_mesh)
-        throw NoriException("Accel: only a single mesh is supported!");
-    m_mesh = mesh;
-    m_bbox = m_mesh->getBoundingBox();
+    m_meshes.push_back(mesh);
+    m_bbox.expandBy(mesh->getBoundingBox());
 }
 
 void Accel::build() {
     /* Nothing to do here for now */
+    uint32_t total_triangles = 0;
+    for (uint32_t i = 0; i < m_meshes.size(); i++) {
+        total_triangles += m_meshes.at(i)->getTriangleCount();
+    }
+
+    uint32_t offset = 0;
+    std::vector<uint32_t> triangles(total_triangles);
+    std::vector<uint32_t> mesh_indices(total_triangles);
+    for (uint32_t current_mesh = 0; current_mesh < m_meshes.size(); current_mesh++) {
+        uint32_t num_triangles_in_mesh = m_meshes.at(current_mesh)->getTriangleCount();
+        for (uint32_t i = 0; i < num_triangles_in_mesh; i++) {
+            triangles[i + offset] = i;
+            mesh_indices[i + offset] = current_mesh;
+        }
+        offset += num_triangles_in_mesh;
+    }
+
+    root = build(m_bbox, triangles, mesh_indices);
 }
 
 bool Accel::rayIntersect(const Ray3f &ray_, Intersection &its, bool shadowRay) const {
@@ -25,22 +46,10 @@ bool Accel::rayIntersect(const Ray3f &ray_, Intersection &its, bool shadowRay) c
     uint32_t f = (uint32_t) -1;      // Triangle index of the closest intersection
 
     Ray3f ray(ray_); /// Make a copy of the ray (we will need to update its '.maxt' value)
-
     /* Brute force search through all triangles */
-    for (uint32_t idx = 0; idx < m_mesh->getTriangleCount(); ++idx) {
-        float u, v, t;
-        if (m_mesh->rayIntersect(idx, ray, u, v, t)) {
-            /* An intersection was found! Can terminate
-               immediately if this is a shadow ray query */
-            if (shadowRay)
-                return true;
-            ray.maxt = its.t = t;
-            its.uv = Point2f(u, v);
-            its.mesh = m_mesh;
-            f = idx;
-            foundIntersection = true;
-        }
-    }
+    foundIntersection = intersectRecursive(*root, ray, its, shadowRay, f);
+    if (shadowRay)
+        return foundIntersection;
 
     if (foundIntersection) {
         /* At this point, we now know that there is an intersection,
@@ -96,6 +105,150 @@ bool Accel::rayIntersect(const Ray3f &ray_, Intersection &its, bool shadowRay) c
     }
 
     return foundIntersection;
+}
+
+bool Accel::intersectRecursive(const Node &node, Ray3f &ray, Intersection &its, bool shadowRay,
+                               uint32_t &hit_idx) const {
+    bool foundIntersection = false;
+
+    if (!node.box.rayIntersect(ray))
+        return false;
+
+    for (uint32_t i = 0; i < node.triangle_indices.size(); i++) {
+        uint32_t triangle_index = node.triangle_indices[i];
+        uint32_t mesh_index = node.mesh_indices[i];
+
+        float u, v, t;
+        if (m_meshes[mesh_index]->rayIntersect(triangle_index, ray, u, v, t) && t < ray.maxt) {
+            if (shadowRay)
+                return true;
+
+            ray.maxt = its.t = t;
+            its.uv = Point2f(u, v);
+            its.mesh = m_meshes[mesh_index];
+            hit_idx = triangle_index;
+            foundIntersection = true;
+        }
+    }
+
+    if (!node.children.empty()) {
+        std::vector<std::pair<Node*, float>> sortedNodes(node.children.size());
+        for (uint32_t i = 0; i < node.children.size(); i++) {
+            auto &child = node.children.at(i);
+            sortedNodes[i] = std::pair<Node*, float>(child, child->box.distanceTo(ray.o));
+        }
+        std::sort(sortedNodes.begin(), sortedNodes.end(), [](const std::pair<Node*,float> &a,
+                                                             const std::pair<Node*,float> &b) {
+            return a.second < b.second;
+        });
+
+        for (auto &child : sortedNodes) {
+            foundIntersection = intersectRecursive(*child.first, ray, its, shadowRay, hit_idx) || foundIntersection;
+            if (foundIntersection && shadowRay)
+                return true;
+        }
+    }
+
+    return foundIntersection;
+}
+
+Node *Accel::build(BoundingBox3f &box, std::vector<uint32_t> &triangle_indices, std::vector<uint32_t> &mesh_indices, int recursive_depth) {
+    if (triangle_indices.empty())
+        return nullptr;
+
+    if (triangle_indices.size() < MAX_TRIANGLES_PER_NODE || recursive_depth > MAX_RECURSIVE_DEPTH) {
+        Node* newNode = new Node();
+        newNode->triangle_indices = std::vector<uint32_t>(triangle_indices);
+        newNode->mesh_indices = std::vector<uint32_t>(mesh_indices);
+        newNode->box = BoundingBox3f(box);
+
+        return newNode;
+    }
+
+    Node *parent = new Node();
+    parent->box = BoundingBox3f(box);
+
+    auto boxes = subdivideBBox(parent->box);
+
+    std::vector<std::vector<uint32_t>> lists(8);
+    std::vector<std::vector<uint32_t>> mesh_indices_lists(8);
+    for (uint32_t i = 0; i < triangle_indices.size(); i++) {
+        uint32_t index = triangle_indices[i];
+        uint32_t mesh_index = mesh_indices[i];
+
+        auto triangleBox = m_meshes[mesh_index]->getBoundingBox(index);
+        for (int j = 0; j < 8; j++) {
+            if (boxes.at(j).overlaps(triangleBox)) {
+                lists[j].push_back(index);
+                mesh_indices_lists[j].push_back(mesh_index);
+            }
+        }
+    }
+
+    std::vector<Node*> nodes(8);
+    tbb::task_scheduler_init init(8);
+    tbb::blocked_range<int> range(0, 8);
+    auto map = [&](const tbb::blocked_range<int> &range) {
+        for (int i = range.begin(); i != range.end(); i++) {
+            BoundingBox3f childBox = boxes.at(i);
+            auto list = lists.at(i);
+            auto mesh_indices_list = mesh_indices_lists.at(i);
+            Node* result = build(childBox, list, mesh_indices_list, recursive_depth+1);
+
+            if (result != nullptr)
+                nodes[i] = result;
+        }
+    };
+    tbb::parallel_for(range, map);
+
+    for (auto value : nodes) {
+        if (value != nullptr)
+            parent->children.push_back(value);
+    }
+
+    /*
+    for (int i = 0; i < 8; i++) {
+        Node* result = build(boxes.at(i), lists.at(i), recursive_depth+1);
+        if (result != nullptr)
+            parent->children.push_back(result);
+    }
+     */
+
+    return parent;
+}
+
+std::vector<BoundingBox3f> subdivideBBox(BoundingBox3f &parent) {
+    Point3f extents = parent.getExtents();
+
+    std::vector<BoundingBox3f> bboxes(8);
+    Point3f x0_y0_z0 = parent.min;
+    Point3f x1_y0_z0 = Point3f(parent.min.x() + extents.x() / 2.f, parent.min.y(), parent.min.z());
+    Point3f x0_y1_z0 = Point3f(parent.min.x(), parent.min.y() + extents.y() / 2.f, parent.min.z());
+    Point3f x1_y1_z0 = Point3f(parent.min.x() + extents.x() / 2.f, parent.min.y() + extents.y() / 2.f, parent.min.z());
+
+    Point3f x0_y0_z1 = Point3f(parent.min.x(), parent.min.y(), parent.min.z() + extents.z() / 2.f);
+    Point3f x1_y0_z1 = Point3f(parent.min.x() + extents.x() / 2.f, parent.min.y(), parent.min.z() + extents.z() / 2.f);
+    Point3f x0_y1_z1 = Point3f(parent.min.x(), parent.min.y() + extents.y() / 2.f, parent.min.z() + extents.z() / 2.f);
+    Point3f x1_y1_z1 = Point3f(parent.min.x() + extents.x() / 2.f, parent.min.y() + extents.y() / 2.f, parent.min.z() + extents.z() / 2.f);
+    Point3f x2_y1_z1 = Point3f(parent.max.x(), parent.min.y() + extents.y() / 2.f, parent.min.z() + extents.z() / 2.f);
+    Point3f x1_y2_z1 = Point3f(parent.min.x() + extents.x() / 2.f, parent.max.y(), parent.min.z() + extents.z() / 2.f);
+    Point3f x2_y2_z1 = Point3f(parent.max.x(), parent.max.y(), parent.min.z() + extents.z() / 2.f);
+
+    Point3f x1_y1_z2 = Point3f(parent.min.x() + extents.x() / 2.f, parent.min.y() + extents.y() / 2.f, parent.max.z());
+    Point3f x2_y1_z2 = Point3f(parent.max.x(), parent.min.y() + extents.y() / 2.f, parent.max.z());
+    Point3f x1_y2_z2 = Point3f(parent.min.x() + extents.x() / 2.f, parent.max.y(), parent.max.z());
+    Point3f x2_y2_z2 = Point3f(parent.max.x(), parent.max.y(), parent.max.z());
+
+    bboxes[0] = BoundingBox3f(x0_y0_z0, x1_y1_z1);
+    bboxes[1] = BoundingBox3f(x1_y0_z0, x2_y1_z1);
+    bboxes[2] = BoundingBox3f(x0_y1_z0, x1_y2_z1);
+    bboxes[3] = BoundingBox3f(x1_y1_z0, x2_y2_z1);
+    bboxes[4] = BoundingBox3f(x0_y0_z1, x1_y1_z2);
+    bboxes[5] = BoundingBox3f(x1_y0_z1, x2_y1_z2);
+    bboxes[6] = BoundingBox3f(x0_y1_z1, x1_y2_z2);
+    bboxes[7] = BoundingBox3f(x1_y1_z1, x2_y2_z2);
+
+    return bboxes;
 }
 
 NORI_NAMESPACE_END
