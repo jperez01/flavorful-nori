@@ -23,17 +23,18 @@ Color3f WhittedIntegrator::Li(const Scene *scene, Sampler *sampler, const Ray3f 
         return its.mesh->getEmitter()->getRadiance();
     }
 
-    const std::vector<Emitter *> &lights = scene->getLights();
-    EmitterQueryRecord emitterQueryRecord(its.p);
-    Color3f Lo(0.0f);
-    for (auto &light : lights) {
+    if (its.mesh->getBSDF()->isDiffuse()) {
+        float light_pdf;
+        const Emitter *light = scene->sampleEmittedLight(sampler->next1D(), light_pdf);
+
+        EmitterQueryRecord emitterQueryRecord(its.p);
         Color3f Le = light->sample(emitterQueryRecord, sampler->next2D());
 
         Ray3f otherRay(its.p, emitterQueryRecord.wi);
         Intersection it_shadow;
         if (scene->rayIntersect(otherRay, it_shadow)) {
             if (it_shadow.t < (emitterQueryRecord.dist - 1.e-5))
-                continue;
+                return Color3f(0.0f);
         }
 
         BSDFQueryRecord record(its.toLocal(-ray.d),
@@ -42,12 +43,18 @@ Color3f WhittedIntegrator::Li(const Scene *scene, Sampler *sampler, const Ray3f 
         Color3f brdf = its.mesh->getBSDF()->eval(record);
         float cosTheta = std::fmax(its.shFrame.n.dot(emitterQueryRecord.wi), 0.0f);
 
-         Lo += cosTheta * brdf * Le / emitterQueryRecord.pdf;
+        return cosTheta * brdf * Le / emitterQueryRecord.pdf / light_pdf;
+    } else {
+        if (sampler->next1D() < 0.95f) {
+            BSDFQueryRecord bsdfQueryRecord(its.toLocal(-ray.d));
+            Color3f brdf = its.mesh->getBSDF()->sample(bsdfQueryRecord, sampler->next2D());
 
-        // Lo += Le * its.shFrame.n.dot(emitterQueryRecord.wi) * its.mesh->getBSDF()->eval(record);
-
+            Ray3f otherRay(its.p, its.toWorld(bsdfQueryRecord.wo));
+            return (1.0f / 0.95f) * brdf * Li(scene, sampler, otherRay);
+        } else {
+            return Color3f(0.0f);
+        }
     }
-    return Lo;
 }
 
 std::string WhittedIntegrator::toString() const {

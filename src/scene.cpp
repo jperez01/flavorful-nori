@@ -109,5 +109,12 @@ std::string Scene::toString() const {
     );
 }
 
-NORI_REGISTER_CLASS(Scene, "scene");
+    const Emitter *Scene::sampleEmittedLight(float sample, float &pdf) const {
+        int index = sample * m_emitters.size();
+
+        pdf = 1.0f / m_emitters.size();
+        return m_emitters[index];
+    }
+
+    NORI_REGISTER_CLASS(Scene, "scene");
 NORI_NAMESPACE_END
