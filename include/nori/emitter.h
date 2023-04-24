@@ -2,6 +2,18 @@
     This file is part of Nori, a simple educational ray tracer
 
     Copyright (c) 2015 by Wenzel Jakob
+
+    Nori is free software; you can redistribute it and/or modify
+    it under the terms of the GNU General Public License Version 3
+    as published by the Free Software Foundation.
+
+    Nori is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program. If not, see <http://www.gnu.org/licenses/>.
 */
 
 #pragma once
@@ -11,61 +23,66 @@
 
 NORI_NAMESPACE_BEGIN
 
-enum EmitterType {
-    AREA_LIGHT
-};
+    struct EmitterQueryRecord {
+        /// Incident direction (in the local frame)
+        Vector3f wi;
 
-struct EmitterQueryRecord {
-    const Emitter* emitter;
+        /// Position for Light Sample
+        Point3f pos;
 
-    Point3f ref;
-    Point3f p;
-    Normal3f n;
-    Point2f uv;
+        /// Positino for source
+        Point3f ref;
 
-    float pdf;
-    Vector3f wi;
-    float dist;
+        /// Normal for that light sample position
+        Normal3f normal;
 
-    EmitterQueryRecord() : emitter(nullptr) {}
-    EmitterQueryRecord(const Point3f &ref) : ref(ref) {}
-    EmitterQueryRecord(const Emitter* emitter,
-                       const Point3f& ref, const Point3f& p,
-                       const Normal3f& n, const Point2f& uv)
-                       : emitter(emitter), ref(ref), p(p), n(n), uv(uv){
-        wi = p - ref;
-        dist = wi.norm();
-        wi /= dist;
-    }
-};
+        ///Ray
+        Ray3f shadowRay;
 
+        /// Measure associated with the sample
+        EMeasure measure;
+
+        EmitterQueryRecord(const Point3f &ref)
+                : ref(ref), measure(EUnknownMeasure) { }
+
+        EmitterQueryRecord(const Point3f &ref, const Vector3f &wi)
+                : ref(ref), wi(wi), measure(EUnknownMeasure) { }
+
+        EmitterQueryRecord(const Point3f &ref, const Normal3f &normal, const Vector3f &wi)
+                : ref(ref), normal(normal), wi(wi), measure(EUnknownMeasure) { }
+
+
+    };
 /**
  * \brief Superclass of all emitters
  */
-class Emitter : public NoriObject {
-public:
-    virtual ~Emitter() {}
+    class Emitter : public NoriObject {
+    public:
+        virtual void setMesh(Mesh* mesh) = 0;
 
-    virtual Color3f sample(EmitterQueryRecord &record, const Point2f &sample) const = 0;
+        virtual Color3f sample(EmitterQueryRecord &eqr, Sampler *sampler) = 0;
 
-    virtual float pdf(const EmitterQueryRecord &record) const = 0;
+        virtual float pdf(const EmitterQueryRecord &eqr) = 0;
 
-    virtual Color3f eval(const EmitterQueryRecord &record) const = 0;
+        virtual Color3f Le(const EmitterQueryRecord &eqr) const = 0;
 
-    virtual Color3f getRadiance() const = 0;
+        virtual bool rayIntersect(const Scene* scene, Ray3f &shadowRay, Intersection &its) const = 0;
 
-    void setMesh(Mesh *mesh) { m_mesh = mesh; }
-    EmitterType getType() const { return m_type; }
+        virtual bool rayIntersect(const Scene* scene, Ray3f &shadowRay) const = 0;
 
-    /**
-     * \brief Return the type of object (i.e. Mesh/Emitter/etc.) 
-     * provided by this instance
-     * */
-    EClassType getClassType() const { return EEmitter; }
+        virtual bool isDeltaLight() const = 0;
+        virtual Color3f getRadiance() const {
+            return Color3f(0.0f);
+        }
+        /**
+         * \brief Return the type of object (i.e. Mesh/Emitter/etc.)
+         * provided by this instance
+         * */
 
-protected:
-    Mesh *m_mesh;
-    EmitterType m_type;
-};
+        EClassType getClassType() const { return EEmitter; }
+
+    protected:
+
+    };
 
 NORI_NAMESPACE_END

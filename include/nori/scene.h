@@ -47,7 +47,7 @@ public:
     const std::vector<Mesh *> &getMeshes() const { return m_meshes; }
     const std::vector<Emitter *> &getLights() const { return m_emitters; }
 
-    const Emitter* sampleEmittedLight(float sample, float &pdf) const;
+    Emitter* sampleEmittedLight(float sample, float &pdf) const;
 
     /**
      * \brief Intersect a ray against all triangles stored in the scene

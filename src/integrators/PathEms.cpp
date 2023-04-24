@@ -17,24 +17,23 @@ Color3f PathEmsIntegrator::Li(const Scene *scene, Sampler *sampler, const Ray3f 
     Color3f Lo(0.0f), throughput(1.0f);
     float eta = 1.0f;
     Ray3f someRay(ray);
-    bool countEmitter = true;
 
     int bounces = 0;
     Intersection its;
     while(scene->rayIntersect(someRay, its)) {
         if (its.mesh->isEmitter() && Frame::cosTheta(its.toLocal(-someRay.d)) > 0) {
             EmitterQueryRecord lRecE(someRay.o);
-            lRecE.n = its.shFrame.n;
-            lRecE.p = its.p;
+            lRecE.normal = its.shFrame.n;
+            lRecE.pos = its.p;
 
-            Lo += throughput * its.mesh->getEmitter()->eval(lRecE);
+            Lo += throughput * its.mesh->getEmitter()->sample(lRecE, sampler);
         }
         if (its.mesh->getBSDF()->isDiffuse()) {
             float light_pdf;
-            const Emitter *light = scene->sampleEmittedLight(sampler->next1D(), light_pdf);
+            Emitter *light = scene->sampleEmittedLight(sampler->next1D(), light_pdf);
 
             EmitterQueryRecord emitterQueryRecord(its.p);
-            Color3f Le = light->sample(emitterQueryRecord, sampler->next2D());
+            Color3f Le = light->sample(emitterQueryRecord, sampler);
 
             Ray3f otherRay(its.p, emitterQueryRecord.wi);
             Intersection it_shadow;
@@ -45,7 +44,7 @@ Color3f PathEmsIntegrator::Li(const Scene *scene, Sampler *sampler, const Ray3f 
                 Color3f brdf = its.mesh->getBSDF()->eval(record);
                 float cosTheta = std::fmax(its.shFrame.n.dot(emitterQueryRecord.wi), 0.0f);
 
-                Lo += cosTheta * brdf * Le / (emitterQueryRecord.pdf * light_pdf);
+                Lo += cosTheta * brdf * Le / (light->pdf(emitterQueryRecord) * light_pdf);
             }
         }
 

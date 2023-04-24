@@ -24,10 +24,10 @@ Color3f PathMatsIntegrator::Li(const Scene *scene, Sampler *sampler, const Ray3f
 
         if (its.mesh->isEmitter() && Frame::cosTheta(its.toLocal(-someRay.d)) > 0) {
             EmitterQueryRecord lRecE(someRay.o);
-            lRecE.n = its.shFrame.n;
-            lRecE.p = its.p;
+            lRecE.normal= its.shFrame.n;
+            lRecE.pos = its.p;
 
-            Lo += throughput * its.mesh->getEmitter()->eval(lRecE);
+            Lo += throughput * its.mesh->getEmitter()->Le(lRecE);
         }
 
         BSDFQueryRecord queryRecord(its.toLocal(-someRay.d));

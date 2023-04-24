@@ -7,6 +7,7 @@
 
 #include <nori/emitter.h>
 #include <nori/proplist.h>
+#include <nori/scene.h>
 
 NORI_NAMESPACE_BEGIN
 
@@ -15,6 +16,21 @@ public:
     AreaLight(const PropertyList &props);
 
     Color3f sample(EmitterQueryRecord &record, const Point2f &sample) const;
+    Color3f sample(EmitterQueryRecord &record, Sampler *sampler);
+
+    bool rayIntersect(const Scene* scene, Ray3f &shadowRay, Intersection &its) const {
+        if(!scene->rayIntersect(shadowRay, its)) {
+            return false;
+        }
+        if(its.mesh->getEmitter() == this)
+            return false;
+
+        return true;
+    }
+    bool rayIntersect(const Scene* scene, Ray3f &shadowRay) const {
+        Intersection its;
+        return rayIntersect(scene, shadowRay, its);
+    }
 
     float pdf(const EmitterQueryRecord &record) const;
 

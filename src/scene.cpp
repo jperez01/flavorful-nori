@@ -109,7 +109,7 @@ std::string Scene::toString() const {
     );
 }
 
-    const Emitter *Scene::sampleEmittedLight(float sample, float &pdf) const {
+     Emitter *Scene::sampleEmittedLight(float sample, float &pdf) const {
         int index = sample * m_emitters.size();
 
         pdf = 1.0f / m_emitters.size();

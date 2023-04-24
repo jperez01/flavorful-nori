@@ -1,61 +1,80 @@
 //
-// Created by juperez01 on 4/21/23.
+//  area.cpp
+//  Half
+//
+//  Created by Junho on 19/06/2019.
 //
 
-#include "areaEmitter.h"
+#include <nori/emitter.h>
+#include <nori/scene.h>
+#include <nori/warp.h>
 
 NORI_NAMESPACE_BEGIN
 
-AreaLight::AreaLight(const PropertyList &props) {
-    m_radiance = props.getColor("radiance", Color3f(0.0f));
-}
+    class AreaLight : public Emitter {
+    public:
+        AreaLight(const PropertyList &props) {
+            m_radiance = props.getColor("radiance",32);
+        }
 
-Color3f AreaLight::sample(EmitterQueryRecord &record, const Point2f &sample) const {
-    m_mesh->samplePosition(sample, record.p, record.n, record.uv);
+        void setMesh(Mesh* mesh) {
+            m_mesh = mesh;
+        }
 
-    record.dist = (record.p - record.ref).norm();
-    record.wi = (record.p - record.ref) / record.dist;
-    record.pdf = pdf(record);
+        Color3f sample(EmitterQueryRecord &eqr, Sampler *sample) {
+            m_mesh->sample(sample, eqr.pos, eqr.normal);
+            eqr.wi = eqr.pos - eqr.ref;
+            eqr.shadowRay = Ray3f(eqr.ref, eqr.wi);
 
-    return eval(record);
-}
+            //preprocessing for caculation
+            Color3f directColor = Color3f(0.f);
 
-float AreaLight::pdf(const EmitterQueryRecord &record) const {
-    float prob_s = m_mesh->pdf(record.p);
-    float denom = std::abs(record.n.dot(record.wi));
-    float norm = record.dist;
+            //for calculatin G(x<->y)
+            float distance = eqr.wi.dot(eqr.wi);
 
-    if (denom < 0.0001f)
-        denom = 0.0001f;
+            directColor = Color3f(1.f/distance) * eqr.normal.dot(-eqr.wi.normalized()) * Le(eqr);
 
-    float pdf_value = prob_s * norm * norm / denom;
+            m_pdf = m_mesh->getTotalSurfaceArea();
+            return directColor * m_pdf;
+        }
 
-    if (isnan(pdf_value))
-        pdf_value = 0.0f;
+        float pdf(const EmitterQueryRecord &eqr) {
+            m_pdf = m_mesh->getTotalSurfaceArea();
+            return 1.f/m_pdf;
+        }
 
-    return pdf_value;
-}
+        Color3f Le(const EmitterQueryRecord &eqr) const {
+            return  -eqr.wi.dot(eqr.normal) > 0.f ? m_radiance : 0.f;
+        }
 
-Color3f AreaLight::eval(const EmitterQueryRecord &record) const {
-    float dot = record.n.dot(record.wi);
-    if (dot <= 0.0f) {
-        return m_radiance;
-    }
+        bool rayIntersect(const Scene* scene, Ray3f &shadowRay, Intersection &its) const {
+            if(!scene->rayIntersect(shadowRay, its)) {
+                return false;
+            }
+            if(its.mesh->getEmitter() == this)
+                return false;
 
-    return Color3f(0.0f);
-}
+            return true;
+        }
+        bool rayIntersect(const Scene* scene, Ray3f &shadowRay) const {
+            Intersection its;
+            return rayIntersect(scene, shadowRay, its);
+        }
 
-std::string AreaLight::toString() const {
-    return tfm::format(
-            "AreaLight[]"
-            );
-}
+        bool isDeltaLight() const {
+            return false;
+        }
 
-void AreaLight::setParent(NoriObject *parent) {
-    auto type = parent->getClassType();
-    if (type == EMesh)
-        m_mesh = static_cast<Mesh*>(parent);
-}
+        std::string toString() const {
+            return "AreaLight[]";
+        }
 
-    NORI_REGISTER_CLASS(AreaLight, "area")
+    private:
+        Color3f m_radiance;
+        float m_pdf;
+        Mesh* m_mesh;
+    };
+
+
+    NORI_REGISTER_CLASS(AreaLight, "area");
 NORI_NAMESPACE_END

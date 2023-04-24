@@ -16,6 +16,9 @@ NORI_NAMESPACE_BEGIN
         Color3f Li(const Scene *scene, Sampler *sampler, const Ray3f &ray) const;
 
         std::string toString() const;
+private:
+        Color3f SamplingLight(const Scene *scene, Sampler *sampler, const Ray3f &ray, int depth = 0) const;
+        Color3f SamplingBSDF(const Scene *scene, Sampler *sampler, const Ray3f &ray, int depth = 0) const;
     };
 
 NORI_NAMESPACE_END
