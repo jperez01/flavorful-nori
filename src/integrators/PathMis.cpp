@@ -26,12 +26,12 @@ NORI_NAMESPACE_BEGIN
         }
 
         if(!its.mesh->getBSDF()->isDiffuse()) {
-            if(drand48() > 0.95)
+            if(sampler->next1D() > 0.95)
                 return Color3f(0.f);
             else {
                 BSDFQueryRecord bsdfQ = BSDFQueryRecord(its.toLocal(-ray.d));
 
-                Color3f albedo = its.mesh->getBSDF()->sample(bsdfQ, Point2f(drand48(), drand48()));
+                Color3f albedo = its.mesh->getBSDF()->sample(bsdfQ, sampler->next2D());
                 return 1.057 * albedo * SamplingLight(scene, sampler, Ray3f(its.p, its.toWorld(bsdfQ.wo)));
             }
         }
@@ -68,7 +68,7 @@ NORI_NAMESPACE_BEGIN
         float bsdfPdf = its.mesh->getBSDF()->pdf(bsdfQ);
         float weight = modifiedLightPdf/(modifiedLightPdf+ bsdfPdf);
 
-        Color3f albedo = its.mesh->getBSDF()->sample(bsdfQ, Point2f(drand48(), drand48()));
+        Color3f albedo = its.mesh->getBSDF()->sample(bsdfQ, sampler->next2D());
 
         Ray3f shadowRay(eqr.ref, eqr.wi);
         //MC integral
@@ -76,7 +76,7 @@ NORI_NAMESPACE_BEGIN
             directColor = objectNormal * Le * bsdf * 1.f/light_pdf;
         }
 
-        if(drand48() < 0.95f && depth < 10)
+        if(sampler->next1D() < 0.95f && depth < 10)
             return weight * 1.f/0.95 * (directColor + albedo * SamplingLight(scene, sampler, Ray3f(its.p, its.toWorld((bsdfQ.wo))), depth + 1));
         else
             return Color3f(0.f);
@@ -89,7 +89,7 @@ NORI_NAMESPACE_BEGIN
         }
 
         BSDFQueryRecord bsdfQ = BSDFQueryRecord(its.toLocal(-ray.d));
-        Color3f albedo = its.mesh->getBSDF()->sample(bsdfQ, Point2f(drand48(), drand48()));
+        Color3f albedo = its.mesh->getBSDF()->sample(bsdfQ, sampler->next2D());
         Color3f light = Color3f(0.f);
         if(its.mesh->isEmitter()) {
             EmitterQueryRecord erq = EmitterQueryRecord(its.p);
@@ -121,7 +121,7 @@ NORI_NAMESPACE_BEGIN
         }
 
         //russian Roulette
-        if(drand48() < 0.95f && depth < 10)
+        if(sampler->next1D() < 0.95f && depth < 10)
             return weight * 1.f/0.95 * (light + albedo * SamplingBSDF(scene, sampler, Ray3f(its.p, its.toWorld((bsdfQ.wo))), depth + 1));
         else
             return Color3f(0.f);
